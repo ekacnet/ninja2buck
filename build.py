@@ -278,7 +278,10 @@ class BuildTarget:
 
         for d in self.producedby.depends:
             if d.producedby and d.producedby.rulename.name == "phony":
-                if len(d.producedby.getInputs()) == 0 and len(d.producedby.depends) == 0:
+                if (
+                    len(d.producedby.getInputs()) == 0
+                    and len(d.producedby.depends) == 0
+                ):
                     return True
                 # Treat the case where the phony target has a ctest command as virtual
                 if "/ctest " in d.producedby.vars.get("COMMAND", ""):
@@ -398,12 +401,11 @@ class Build:
 
     def getInputs(self) -> List[BuildTarget]:
         return self._inputs
-    
+
     def addInput(self, i: BuildTarget):
         if i not in self._inputs:
             self._inputs.append(i)
             i.usedby(self)
-
 
     def needPruning(self, status: bool = True):
         self.pruned = status
@@ -446,11 +448,24 @@ class Build:
         return ef
 
     @classmethod
+    def _addAllCCimportDeps(
+        cls,
+        ccImport: BazelCCImport,
+        ctx: BazelBuildVisitorContext,
+    ):
+        ctx.bazelbuild.bazelTargets.add(ccImport)
+        for d in ccImport.deps:
+            if isinstance(d, BazelCCImport):
+                cls._addAllCCimportDeps(d, ctx)
+
+    @classmethod
     def handleFileForBazelGen(
         cls,
         el: "BuildTarget",
         ctx: BazelBuildVisitorContext,
     ):
+        if el.shortName.endswith("execute_query_handler.cc"):
+            logging.info(f"About to add {el.name} with includes {el.includes}")
         if (
             el.type == TargetType.external
             and el.opaque is None
@@ -460,6 +475,7 @@ class Build:
                 f"Dealing with external dep {el.name} that doesn't have an opaque"
             )
             return
+
         for dep in el.depends:
             # logging.debug(f"Visiting dep {dep}")
             if ctx.current is None:
@@ -514,10 +530,7 @@ class Build:
                     ctx.bazelbuild.bazelTargets.add(any_cc_proto)
                 else:
                     ctx.current.addDep(imp)
-                    ctx.bazelbuild.bazelTargets.add(imp)
-                    for d in imp.deps:
-                        if isinstance(d, BazelCCImport):
-                            ctx.bazelbuild.bazelTargets.add(d)
+                    cls._addAllCCimportDeps(imp, ctx)
             else:
                 logging.warn(f"Visiting {dep} but don't know what to do for {el}")
 
@@ -527,7 +540,7 @@ class Build:
             and ctx.current is not None
         ):
             # There is another way some libraires are added as dependencies to a build, they
-            # are just inputs for it 
+            # are just inputs for it
             maybe_cc_import = el.opaque
             if isinstance(maybe_cc_import, BazelCCImport):
                 # This is to allow to materialize the cc_import in the BUILD file
@@ -551,11 +564,7 @@ class Build:
                         f"Adding {maybe_cc_import.name} to {ctx.current.name} for external libray {el.name}"
                     )
                     ctx.current.addDep(maybe_cc_import)
-                    ctx.bazelbuild.bazelTargets.add(maybe_cc_import)
-                    for d in maybe_cc_import.deps:
-                        logging.info(f"Adding dep {d.name} because of cc_import {maybe_cc_import.name}")
-                        if isinstance(d, BazelCCImport):
-                            ctx.bazelbuild.bazelTargets.add(d)
+                    cls._addAllCCimportDeps(maybe_cc_import, ctx)
                 return
             else:
                 logging.error(f"External dep {el.name} has an unexpected opaque")
@@ -953,7 +962,7 @@ class Build:
                 [ctx.current.addDep(o) for o in outs]
         ctx.current = genTarget
         return True
-    
+
     @classmethod
     def _getProtoName(kls, element: BuildTarget) -> str:
         regex = r"(.*?)(\.grpc)?\.pb\.(cc|h|cc\.o)$"
@@ -985,7 +994,9 @@ class Build:
         existingNames = list(kls._protoNames.values())
 
         for i in sorted(range(-len(arr), 0), reverse=True):
-            logging.debug(f"Checking {name} {arr[i:]} i = {i} location = {element.location}")
+            logging.debug(
+                f"Checking {name} {arr[i:]} i = {i} location = {element.location}"
+            )
             filename = "_".join(arr[i:])
             if filename not in existingNames:
                 kls._protoNames[name] = filename
@@ -1033,7 +1044,7 @@ class Build:
     ) -> bool:
         location = TopLevelGroupingStrategy().getBuildFilenamePath(el)
         if self.associatedBazelTarget is None:
-            #FIXME maybe a cc_test here ?
+            # FIXME maybe a cc_test here ?
             t = getObject(BazelTarget, "cc_binary", el.name, location)
             nextCurrent = t
             ctx.bazelbuild.bazelTargets.add(t)
