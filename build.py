@@ -1175,6 +1175,9 @@ class Build:
             if flag == "-g":
                 # Let's not keep the debug flag
                 keep = False
+            if flag == "-DNDEBUG":
+                # Let's not keep the debug flag
+                keep = False
             if flag.startswith("-O"):
                 # Let's not keep the optimization flag
                 keep = False
